@@ -1,0 +1,298 @@
+#!/bin/bash
+#
+# Helper script to package PHP extensions.
+# You should install and use dh-make-pecl instead : http://packages.debian.org/dh-make-php
+#
+# Copyright (c) 2012 Guillaume Plessis <gui@dotdeb.org>
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
+
+export LANG=C
+
+ORIGDIR=$(pwd)
+MAINT_GECOS="${DEBFULLNAME} <${DEBEMAIL}>"
+DATE=$(date '+%a, %d %b %Y %X %z')
+
+if [ -z ${DEBFULLNAME} ] || [ -z ${DEBEMAIL} ] ; then
+    echo "Please fill in the DEBFULLNAME and DEBEMAIL environment variables"
+    exit 1
+fi
+
+if [ $# -ne 1 ] ; then
+    echo "Usage : $0 directory"
+    exit 1
+fi
+
+if [ ! -d $1 ] ; then
+    echo "Error: $1 is not a directory"
+    exit 1
+fi
+
+EXTENSION=$(basename $1| tr [:upper:] [:lower:]|sed -ne 's/^\([a-z][[:alnum:]]*\).*$/\1/p')
+
+if [ -z $EXTENSION ] ; then
+    echo "Error: Unable to determine the extension's name"
+    exit 1
+fi
+
+dpkg -l php5-dev | grep -q '^ii' || ( echo "Error : please install php5-dev" && exit 1)
+
+PHPVERSION=$(dpkg -p php5-dev|sed -ne 's/^Version: \(.*\)$/\1/p')
+PHPAPIVERSION=$(grep '\#define PHP_API_VERSION ' /usr/include/php5/main/php.h|sed 's/\#define PHP_API_VERSION //')
+
+
+if [ "$EXTENSION" == "memcached" ] ; then
+    ADDITIONAL_CONFIGURE_OPTIONS="--enable-memcached-json"
+else
+    ADDITIONAL_CONFIGURE_OPTIONS=""
+fi
+
+if [ "$EXTENSION" == "spplus" ] ; then
+    EXTENSION_SO_NAME=php_spplus
+else
+    EXTENSION_SO_NAME=$EXTENSION
+fi
+
+if [ "$EXTENSION" == "suhosin" ] ; then
+    ADDITIONAL_COMMAND=" echo 'suhosin.executor.include.whitelist=\"phar\"' >> debian/tmp/etc/php5/conf.d/suhosin.ini"
+fi
+
+echo "Creating php5-$EXTENSION..."
+echo "   PHP version : $PHPVERSION"
+echo "   PHP Api : $PHPAPIVERSION"
+
+cd $1
+mkdir debian &>/dev/null
+cd debian
+
+# {{{ changelog
+cat > changelog << EOD
+php5-$EXTENSION ($PHPVERSION) unstable; urgency=low
+
+  * $EXTENSION extension for php5 ($PHPVERSION release)
+
+ -- $MAINT_GECOS  $DATE
+EOD
+# }}}
+
+# {{{
+cat > conffiles <<EOD
+/etc/php5/conf.d/$EXTENSION.ini
+EOD
+# }}}
+
+# {{{ control
+cat > control << EOD
+Source: php5-$EXTENSION
+Section: php
+Priority: optional
+Maintainer: $MAINT_GECOS
+Build-Depends: debhelper, php5-dev
+Standards-Version: 3.9.1
+
+Package: php5-$EXTENSION
+Architecture: any
+Depends: \${shlibs:Depends}, \${misc:Depends}, \${php:Depends}, php5-common (= $PHPVERSION)
+Description: $EXTENSION module for php5
+ This package provides a module for $EXTENSION functions in PHP scripts.
+ .
+ PHP5 is a widely-used general-purpose scripting language that is
+ especially suited for Web development and can be embedded into HTML.
+ The goal of the language is to allow web developers to write
+ dynamically generated pages quickly. This version of PHP5 was built
+ with the Suhosin patch.
+
+EOD
+# }}}
+
+# {{{ php5-EXTENSION.postinst
+cat > php5-$EXTENSION.postinst << EOD
+#!/bin/sh
+
+set -e
+
+#EXTRA#
+#DEBHELPER#
+
+EOD
+# }}}
+
+# {{{ rules
+cat > rules << EOD
+#!/usr/bin/make -f
+# Sample debian/rules that uses debhelper.
+# GNU copyright 1997 by Joey Hess.
+#
+# This version is for a hypothetical package that builds an
+# architecture-dependant package, as well as an architecture-independent
+# package.
+
+# Uncomment this to turn on verbose mode.
+#export DH_VERBOSE=1
+
+# This has to be exported to make some magic below work.
+export DH_OPTIONS
+
+# Set this flag to 'yes' if you want to disable all modifications breaking abi
+# compatibility to upstream
+PHP5_COMPAT=no
+
+DEB_HOST_GNU_TYPE    ?= \$(shell dpkg-architecture -qDEB_HOST_GNU_TYPE)
+DEB_BUILD_GNU_TYPE   ?= \$(shell dpkg-architecture -qDEB_BUILD_GNU_TYPE)
+DEB_BUILD_ARCH   ?= \$(shell dpkg-architecture -qDEB_BUILD_ARCH)
+
+PHP5_SOURCE_VERSION   = \$(shell dpkg-parsechangelog | grep ^Version | sed "s/Version: //")
+PHP5_UPSTREAM_VERSION = \$(shell echo \$(PHP5_SOURCE_VERSION) | sed -e "s/-.*//" -e "s/.*://")
+PHP5_DEBIAN_REVISION  = \$(shell echo \$(PHP5_SOURCE_VERSION) | sed "s/.*-//")
+
+PROG_SENDMAIL = /usr/sbin/sendmail
+ifeq (,\$(findstring noopt,\$(DEB_BUILD_OPTIONS)))
+  CFLAGS += -O2
+else
+  CFLAGS += -O0
+endif
+CFLAGS += -Wall -fsigned-char -fno-strict-aliasing
+# LFS support
+ifneq (yes,\$(PHP5_COMPAT))
+  CFLAGS += \$(shell getconf LFS_CFLAGS)
+endif
+
+# Enable IEEE-conformant floating point math on alphas (not the default)
+ifeq (alpha-linux-gnu,\$(DEB_HOST_GNU_TYPE))
+  CFLAGS += -mieee
+endif
+
+ifeq (\$(DEB_HOST_GNU_TYPE), \$(findstring \$(DEB_HOST_GNU_TYPE), ia64-linux-gnu powerpc64-linux-gnu avr32-linux-gnu))
+  CFLAGS += -g
+else
+  CFLAGS += -gstabs
+endif
+
+# support new (>= 2.2) and older versions of libtool for backporting ease
+LIBTOOL_DIRS = /usr/share/libtool/config /usr/share/libtool
+LTMAIN = \$(firstword \$(wildcard \$(foreach d,\$(LIBTOOL_DIRS),\$d/ltmain.sh)))
+LTMAIN_DIR = \$(dir \$(LTMAIN))
+
+ifeq (\$(LTMAIN_DIR), /usr/share/libtool/)
+LIBTOOL_CONFLICTS:=libtool (>= 2.2)
+else ifeq (\$(LTMAIN_DIR), /usr/share/libtool/config/)
+LIBTOOL_CONFLICTS:=libtool (<< 2.2)
+else
+LIBTOOL_CONFLICTS:=\$(error "could not resolve path to ltmain.sh")
+endif
+
+# only enable interbase support on archs where it is supported
+ifneq (,\$(filter \$(DEB_HOST_ARCH),amd64 armel armhf i386 ia64 kfreebsd-amd64 kfreebsd-i386 mips mipsel powerpc s390 sparc))
+	IBFLAGS=--with-interbase=shared,/usr \
+		--with-pdo-firebird=shared,/usr
+endif
+
+ifneq (,\$(filter parallel=%,\$(DEB_BUILD_OPTIONS)))
+    NUMJOBS = \$(patsubst parallel=%,%,\$(filter parallel=%,\$(DEB_BUILD_OPTIONS)))
+    MAKEFLAGS += -j\$(NUMJOBS)
+endif
+
+# enable the hardening wrapper
+DEB_BUILD_HARDENING = 1
+# but disable PIE
+DEB_BUILD_HARDENING_PIE = 0
+export DEB_BUILD_HARDENING DEB_BUILD_HARDENING_PIE
+
+configure-stamp: configure
+	dh_testdir
+	# Add here commands to configure the package.
+	./configure --disable-rpath --prefix=/usr \\
+		--with-php-config=/usr/bin/php-config5 $ADDITIONAL_CONFIGURE_OPTIONS
+	touch configure-stamp
+
+build: build-stamp
+
+build-stamp:  configure-stamp
+	dh_testdir
+
+	# Add here commands to compile the package.
+	\$(MAKE)
+
+	touch build-stamp
+
+clean:
+	dh_testdir
+	dh_testroot
+	rm -f build-stamp configure-stamp
+	rm -f conftest*
+
+	# Add here commands to clean up after the build process.
+	-\$(MAKE) distclean
+	dh_clean
+
+install: build
+	dh_testdir
+	dh_testroot
+	dh_clean -k
+	dh_installdirs
+
+	# Add here commands to install the package into debian/tmp.
+	(ext=\`/usr/bin/php-config5 --extension-dir\`;mkdir -p debian/tmp/\$\${ext};install -m 644 -o root -g root modules/$EXTENSION_SO_NAME.so debian/tmp/\$\${ext}/$EXTENSION.so;)
+
+#	dh_install
+
+
+# Build architecture-independent files here.
+binary-indep: build install
+# We have nothing to do by default.
+
+# Build architecture-dependent files here.
+binary-arch: build install
+	dh_testdir
+	dh_testroot
+
+	mkdir -p debian/tmp/etc/php5/conf.d
+	echo "; configuration for php $EXTENSION module" > debian/tmp/etc/php5/conf.d/$EXTENSION.ini
+ifeq ($EXTENSION, xdebug)
+	echo "zend_extension=\`/usr/bin/php-config5 --extension-dir\`/$EXTENSION.so" >> debian/tmp/etc/php5/conf.d/$EXTENSION.ini; $ADDITIONAL_COMMAND
+else
+	echo "extension=$EXTENSION.so" >> debian/tmp/etc/php5/conf.d/$EXTENSION.ini; $ADDITIONAL_COMMAND
+endif
+
+	dh_installchangelogs
+	dh_installdocs
+	dh_installexamples
+	dh_installdebconf
+	dh_installman
+	dh_link
+	dh_strip
+	dh_compress
+	dh_fixperms
+	dh_installdeb
+	dh_shlibdeps
+	dh_gencontrol
+	dh_md5sums
+	dh_builddeb
+
+binary: binary-indep binary-arch
+.PHONY: build clean binary-indep binary-arch binary install
+EOD
+# }}}
+
+chmod 755 rules
+
+cd ..
+phpize
+./debian/rules binary
+
+cd $ORIGDIR
+
+# {{{ Vim variables
+# vim: sw=4 ts=4 fdm=marker
+# }}}
