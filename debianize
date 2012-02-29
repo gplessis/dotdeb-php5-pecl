@@ -21,13 +21,14 @@
 export LANG=C
 
 ORIGDIR=$(pwd)
-MAINT_GECOS="${DEBFULLNAME} <${DEBEMAIL}>"
 DATE=$(date '+%a, %d %b %Y %X %z')
 
-if [ -z ${DEBFULLNAME} ] || [ -z ${DEBEMAIL} ] ; then
+if [ "${DEBFULLNAME}" == "" ] || [ "${DEBEMAIL}" == "" ] ; then
     echo "Please fill in the DEBFULLNAME and DEBEMAIL environment variables"
     exit 1
 fi
+
+MAINT_GECOS="${DEBFULLNAME} <${DEBEMAIL}>"
 
 if [ $# -ne 1 ] ; then
     echo "Usage : $0 directory"
@@ -49,7 +50,7 @@ fi
 dpkg -l php5-dev | grep -q '^ii' || ( echo "Error : please install php5-dev" && exit 1)
 
 PHPVERSION=$(dpkg -p php5-dev|sed -ne 's/^Version: \(.*\)$/\1/p')
-PHPAPIVERSION=$(grep '\#define PHP_API_VERSION ' /usr/include/php5/main/php.h|sed 's/\#define PHP_API_VERSION //')
+PHPAPIVERSION=$(/usr/bin/php-config5 --phpapi)
 
 
 if [ "$EXTENSION" == "memcached" ] ; then
@@ -78,17 +79,11 @@ cd debian
 
 # {{{ changelog
 cat > changelog << EOD
-php5-$EXTENSION ($PHPVERSION) unstable; urgency=low
+php5-$EXTENSION ($PHPVERSION) stable; urgency=low
 
   * $EXTENSION extension for php5 ($PHPVERSION release)
 
  -- $MAINT_GECOS  $DATE
-EOD
-# }}}
-
-# {{{
-cat > conffiles <<EOD
-/etc/php5/conf.d/$EXTENSION.ini
 EOD
 # }}}
 
@@ -99,19 +94,19 @@ Section: php
 Priority: optional
 Maintainer: $MAINT_GECOS
 Build-Depends: debhelper, php5-dev
-Standards-Version: 3.9.1
+Standards-Version: 3.9.2
 
 Package: php5-$EXTENSION
 Architecture: any
-Depends: \${shlibs:Depends}, \${misc:Depends}, \${php:Depends}, php5-common (= $PHPVERSION)
+Depends: \${shlibs:Depends}, \${misc:Depends}, phpapi-$PHPAPIVERSION, php5-common (= $PHPVERSION)
+Pre-Depends: dpkg (>= 1.15.7.2~) | dpkg-maintscript-helper
 Description: $EXTENSION module for php5
  This package provides a module for $EXTENSION functions in PHP scripts.
  .
  PHP5 is a widely-used general-purpose scripting language that is
  especially suited for Web development and can be embedded into HTML.
  The goal of the language is to allow web developers to write
- dynamically generated pages quickly. This version of PHP5 was built
- with the Suhosin patch.
+ dynamically generated pages quickly.
 
 EOD
 # }}}
@@ -125,6 +120,108 @@ set -e
 #EXTRA#
 #DEBHELPER#
 
+inidir=/etc/php5/mods-available
+if [ "\$1" = "configure" ]; then
+    for dsoname in $EXTENSION; do
+        inifile=\${dsoname}.ini
+        priority=\$(sed -ne "s/^; priority=\([0-9]\+\)\$/\\\1/p" /usr/share/php5/$EXTENSION/\${inifile})
+
+        # Register new conffile with UCF
+        ucf /usr/share/php5/$EXTENSION/\${inifile} \${inidir}/\${inifile}
+        ucfr php5-$EXTENSION \${inidir}/\${inifile}
+
+        # Move pre-extension manager conffile
+        dpkg-maintscript-helper mv_conffile /etc/php5/conf.d/\${inifile} \${inidir}/\${inifile} 5.4.0~rc6-1 -- "\$@";
+
+        if [ -f "\${inidir}/\${inifile}.dpkg-new" ]; then
+            local md5sum="\$(md5sum \${inidir}/\${inifile}.dpkg-new | sed -e 's/ .*//')"
+            local old_md5sum="\$(md5sum \${inidir}/\${inifile} | sed -e 's/ .*//')"
+            if [ "\$md5sum" = "\$old_md5sum" ]; then
+                mv "\${inidir}/\${inifile}.dpkg-new" "\${inidir}/\${inifile}"
+            fi
+        fi
+
+        # Enable the module
+        php5enmod \${dsoname}/\${priority:-20}
+    done
+fi
+
+exit 0
+EOD
+# }}}
+
+# {{{ php5-EXTENSION.preinst
+cat > php5-$EXTENSION.preinst << EOD
+#!/bin/sh
+set -e
+
+#EXTRA#
+#DEBHELPER#
+
+for dsoname in $EXTENSION; do
+    inifile=\${dsoname}.ini
+    dpkg-maintscript-helper mv_conffile /etc/php5/conf.d/\${inifile} /etc/php5/mods-available/\${inifile} 5.4.0~rc6-1 -- "\$@";
+done
+
+exit 0
+EOD
+# }}}
+
+# {{{ php5-EXTENSION.postrm
+cat > php5-$EXTENSION.postrm << EOD
+#!/bin/sh
+
+set -e
+
+#EXTRA#
+#DEBHELPER#
+
+inidir=/etc/php5/mods-available
+for dsoname in $EXTENSION; do
+    inifile=\${dsoname}.ini
+
+    dpkg-maintscript-helper mv_conffile /etc/php5/conf.d/\${inifile} \${inidir}/\${inifile} 5.4.0~rc6-1 -- "\$@";
+
+    if [ "\$1" = "purge" ]; then
+        for ext in '~' '%' .bak .ucf-new .ucf-old .ucf-dist;  do
+            rm -f \${inidir}/\${inifile}\${ext}
+        done
+        rm -f \${inidir}/\${inifile}
+        if which ucf >/dev/null; then
+            ucf --purge \${inidir}/\${inifile}
+        fi
+        if which ucfr >/dev/null; then
+            ucfr --purge php5-$EXTENSION \${inidir}/\${inifile}
+        fi
+    fi
+done
+
+exit 0
+EOD
+# }}}
+
+# {{{ php5-EXTENSION.prerm
+cat > php5-$EXTENSION.prerm << EOD
+#!/bin/sh
+
+set -e
+
+#EXTRA#
+#DEBHELPER#
+
+if [ "\$1" = "remove" ]; then
+    for dsoname in $EXTENSION; do
+        php5dismod \${dsoname}
+    done
+fi
+
+exit 0
+EOD
+# }}}
+
+# {{{ php5-EXTENSION.triggers
+cat > php5-$EXTENSION.triggers << EOD
+activate /etc/php5/conf.d
 EOD
 # }}}
 
@@ -192,12 +289,6 @@ else
 LIBTOOL_CONFLICTS:=\$(error "could not resolve path to ltmain.sh")
 endif
 
-# only enable interbase support on archs where it is supported
-ifneq (,\$(filter \$(DEB_HOST_ARCH),amd64 armel armhf i386 ia64 kfreebsd-amd64 kfreebsd-i386 mips mipsel powerpc s390 sparc))
-	IBFLAGS=--with-interbase=shared,/usr \
-		--with-pdo-firebird=shared,/usr
-endif
-
 ifneq (,\$(filter parallel=%,\$(DEB_BUILD_OPTIONS)))
     NUMJOBS = \$(patsubst parallel=%,%,\$(filter parallel=%,\$(DEB_BUILD_OPTIONS)))
     MAKEFLAGS += -j\$(NUMJOBS)
@@ -257,12 +348,13 @@ binary-arch: build install
 	dh_testdir
 	dh_testroot
 
-	mkdir -p debian/tmp/etc/php5/conf.d
-	echo "; configuration for php $EXTENSION module" > debian/tmp/etc/php5/conf.d/$EXTENSION.ini
+	mkdir -p debian/tmp/usr/share/php5/$EXTENSION/
+	echo "; configuration for php $EXTENSION module" > debian/tmp/usr/share/php5/$EXTENSION/$EXTENSION.ini
+	echo "; priority=20" >> debian/tmp/usr/share/php5/$EXTENSION/$EXTENSION.ini
 ifeq ($EXTENSION, xdebug)
-	echo "zend_extension=\`/usr/bin/php-config5 --extension-dir\`/$EXTENSION.so" >> debian/tmp/etc/php5/conf.d/$EXTENSION.ini; $ADDITIONAL_COMMAND
+	echo "zend_extension=\`/usr/bin/php-config5 --extension-dir\`/$EXTENSION.so" >> debian/tmp/usr/share/php5/$EXTENSION/$EXTENSION.ini; $ADDITIONAL_COMMAND
 else
-	echo "extension=$EXTENSION.so" >> debian/tmp/etc/php5/conf.d/$EXTENSION.ini; $ADDITIONAL_COMMAND
+	echo "extension=$EXTENSION.so" >> debian/tmp/usr/share/php5/$EXTENSION/$EXTENSION.ini; $ADDITIONAL_COMMAND
 endif
 
 	dh_installchangelogs
