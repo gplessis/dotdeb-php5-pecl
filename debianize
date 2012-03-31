@@ -98,8 +98,8 @@ Standards-Version: 3.9.2
 
 Package: php5-$EXTENSION
 Architecture: any
-Depends: \${shlibs:Depends}, \${misc:Depends}, phpapi-$PHPAPIVERSION, php5-common (= $PHPVERSION)
-Pre-Depends: dpkg (>= 1.15.7.2~) | dpkg-maintscript-helper
+Depends: \${shlibs:Depends}, \${misc:Depends}, phpapi-$PHPAPIVERSION, php5-common (= $PHPVERSION), ucf
+Pre-Depends: dpkg (>= 1.15.7.2~)
 Description: $EXTENSION module for php5
  This package provides a module for $EXTENSION functions in PHP scripts.
  .
@@ -134,8 +134,8 @@ if [ "\$1" = "configure" ]; then
         dpkg-maintscript-helper mv_conffile /etc/php5/conf.d/\${inifile} \${inidir}/\${inifile} 5.4.0~rc6-1 -- "\$@";
 
         if [ -f "\${inidir}/\${inifile}.dpkg-new" ]; then
-            local md5sum="\$(md5sum \${inidir}/\${inifile}.dpkg-new | sed -e 's/ .*//')"
-            local old_md5sum="\$(md5sum \${inidir}/\${inifile} | sed -e 's/ .*//')"
+            md5sum="\$(md5sum \${inidir}/\${inifile}.dpkg-new | sed -e 's/ .*//')"
+            old_md5sum="\$(md5sum \${inidir}/\${inifile} | sed -e 's/ .*//')"
             if [ "\$md5sum" = "\$old_md5sum" ]; then
                 mv "\${inidir}/\${inifile}.dpkg-new" "\${inidir}/\${inifile}"
             fi
