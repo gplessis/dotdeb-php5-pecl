@@ -49,7 +49,7 @@ fi
 
 dpkg -l php5-dev | grep -q '^ii' || ( echo "Error : please install php5-dev" && exit 1)
 
-PHPVERSION=$(dpkg -p php5-dev|sed -ne 's/^Version: \(.*\)$/\1/p')
+PHPVERSION=$(dpkg -s php5-dev|sed -ne 's/^Version: \(.*\)$/\1/p')
 PHPAPIVERSION=$(/usr/bin/php-config5 --phpapi)
 
 
