@@ -47,7 +47,7 @@ if [ -z $EXTENSION ] ; then
     exit 1
 fi
 
-dpkg -l php5-dev | grep -q '^ii' || ( echo "Error : please install php5-dev" && exit 1)
+dpkg -l php5-dev | grep -q '^.i' || ( echo "Error : please install php5-dev" && exit 1)
 
 PHPVERSION=$(dpkg -s php5-dev|sed -ne 's/^Version: \(.*\)$/\1/p')
 PHPAPIVERSION=$(/usr/bin/php-config5 --phpapi)
