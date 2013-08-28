@@ -19,6 +19,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 export LANG=C
+export LC_ALL=C
 
 ORIGDIR=$(pwd)
 DATE=$(date '+%a, %d %b %Y %X %z')
@@ -52,9 +53,11 @@ dpkg -l php5-dev | grep -q '^.i' || ( echo "Error : please install php5-dev" && 
 PHPVERSION=$(dpkg -s php5-dev|sed -ne 's/^Version: \(.*\)$/\1/p')
 PHPAPIVERSION=$(/usr/bin/php-config5 --phpapi)
 
-
 if [ "$EXTENSION" == "memcached" ] ; then
+    #ADDITIONAL_CONFIGURE_OPTIONS="--enable-memcached-json --enable-memcached-igbinary"
     ADDITIONAL_CONFIGURE_OPTIONS="--enable-memcached-json"
+#elif [ "$EXTENSION" == "redis" ] ; then
+#    ADDITIONAL_CONFIGURE_OPTIONS="--enable-redis-igbinary"
 else
     ADDITIONAL_CONFIGURE_OPTIONS=""
 fi
@@ -63,10 +66,6 @@ if [ "$EXTENSION" == "spplus" ] ; then
     EXTENSION_SO_NAME=php_spplus
 else
     EXTENSION_SO_NAME=$EXTENSION
-fi
-
-if [ "$EXTENSION" == "suhosin" ] ; then
-    ADDITIONAL_COMMAND=" echo 'suhosin.executor.include.whitelist=\"phar\"' >> debian/tmp/etc/php5/conf.d/suhosin.ini"
 fi
 
 echo "Creating php5-$EXTENSION..."
@@ -98,8 +97,8 @@ Standards-Version: 3.9.2
 
 Package: php5-$EXTENSION
 Architecture: any
-Depends: \${shlibs:Depends}, \${misc:Depends}, phpapi-$PHPAPIVERSION, php5-common (= $PHPVERSION), ucf
-Pre-Depends: dpkg (>= 1.15.7.2~)
+Depends: \${shlibs:Depends}, \${misc:Depends}, phpapi-$PHPAPIVERSION, php5-common (= $PHPVERSION)
+Pre-Depends: dpkg (>= 1.15.7.2~) | dpkg-maintscript-helper
 Description: $EXTENSION module for php5
  This package provides a module for $EXTENSION functions in PHP scripts.
  .
@@ -303,7 +302,7 @@ export DEB_BUILD_HARDENING DEB_BUILD_HARDENING_PIE
 configure-stamp: configure
 	dh_testdir
 	# Add here commands to configure the package.
-	./configure --disable-rpath --prefix=/usr \\
+	./configure --prefix=/usr \\
 		--with-php-config=/usr/bin/php-config5 $ADDITIONAL_CONFIGURE_OPTIONS
 	touch configure-stamp
 
@@ -359,8 +358,7 @@ endif
 
 ifeq ($EXTENSION, xcache)
 	mkdir -p debian/tmp/usr/share/$EXTENSION/
-	cp -r admin debian/tmp/usr/share/$EXTENSION/
-	cp -r coverager debian/tmp/usr/share/$EXTENSION/
+	cp -r htdocs debian/tmp/usr/share/$EXTENSION/
 endif
 
 	dh_installchangelogs
@@ -391,6 +389,4 @@ phpize
 
 cd $ORIGDIR
 
-# {{{ Vim variables
 # vim: sw=4 ts=4 fdm=marker
-# }}}
