@@ -73,8 +73,14 @@ echo "   PHP version : $PHPVERSION"
 echo "   PHP Api : $PHPAPIVERSION"
 
 cd $1
-mkdir debian &>/dev/null
+mkdir -p debian/source/
 cd debian
+
+# {{{ source/format
+cat > source/format << EOD
+3.0 (quilt)
+EOD
+# }}}
 
 # {{{ changelog
 cat > changelog << EOD
@@ -93,20 +99,49 @@ Section: php
 Priority: optional
 Maintainer: $MAINT_GECOS
 Build-Depends: debhelper, php5-dev
-Standards-Version: 3.9.2
+Standards-Version: 3.9.4
 
 Package: php5-$EXTENSION
 Architecture: any
-Depends: \${shlibs:Depends}, \${misc:Depends}, phpapi-$PHPAPIVERSION, php5-common (= $PHPVERSION)
-Pre-Depends: dpkg (>= 1.15.7.2~) | dpkg-maintscript-helper
+Depends: \${shlibs:Depends}, \${misc:Depends}, \${php:Depends}, php5-common (= $PHPVERSION), ucf
+Pre-Depends: dpkg (>= 1.15.7.2~)
 Description: $EXTENSION module for php5
  This package provides a module for $EXTENSION functions in PHP scripts.
  .
- PHP5 is a widely-used general-purpose scripting language that is
- especially suited for Web development and can be embedded into HTML.
- The goal of the language is to allow web developers to write
- dynamically generated pages quickly.
+ PHP (recursive acronym for PHP: Hypertext Preprocessor) is a widely-used
+ open source general-purpose scripting language that is especially suited
+ for web development and can be embedded into HTML.
+EOD
+# }}}
 
+# {{{ php5-EXTENSION.bug.control
+cat > php5-$EXTENSION.bug.control << EOD
+report-with: php5-common php5-cli libphp5-embed libapache2-mod-php5 libapache2-mod-php5filter php5-cgi php5-fpm
+EOD
+# }}}
+
+# {{{ php5-EXTENSION.bug.script
+cat > php5-$EXTENSION.bug.script << EOD
+#!/bin/sh
+
+MATCH="^[[:space:]]*($|;)"
+
+echo "==== Additional PHP 5 information ====" >&3
+echo "" >&3
+echo "++++ PHP 5 SAPI (php5query -S): ++++" >&3
+/usr/sbin/php5query -S >&3
+echo "" >&3
+echo "++++ PHP 5 Extensions (php5query -M -v): ++++" >&3
+/usr/sbin/php5query -M -v >&3
+echo "" >&3
+
+echo "++++ Configuration files: ++++" >&3
+for dsoname in $EXTENSION; do
+    inifile=\${dsoname}.ini
+    echo "**** /etc/php5/mods-available/\$dsoname.ini ****" >&3
+    grep -Ev "\$MATCH" "/etc/php5/mods-available/\$dsoname.ini" >&3
+    echo "" >&3
+done
 EOD
 # }}}
 
@@ -117,33 +152,37 @@ cat > php5-$EXTENSION.postinst << EOD
 set -e
 
 #EXTRA#
-#DEBHELPER#
 
-inidir=/etc/php5/mods-available
 if [ "\$1" = "configure" ]; then
-    for dsoname in $EXTENSION; do
-        inifile=\${dsoname}.ini
-        priority=\$(sed -ne "s/^; priority=\([0-9]\+\)\$/\\\1/p" /usr/share/php5/$EXTENSION/\${inifile})
+    inidir=/etc/php5/mods-available
 
-        # Register new conffile with UCF
-        ucf /usr/share/php5/$EXTENSION/\${inifile} \${inidir}/\${inifile}
-        ucfr php5-$EXTENSION \${inidir}/\${inifile}
+    if [ -e /usr/share/php5/php5-maintscript-helper ] ; then
+	. /usr/share/php5/php5-maintscript-helper
 
-        # Move pre-extension manager conffile
-        dpkg-maintscript-helper mv_conffile /etc/php5/conf.d/\${inifile} \${inidir}/\${inifile} 5.4.0~rc6-1 -- "\$@";
+	for dsoname in $EXTENSION; do
+	    inifile=\${dsoname}.ini
 
-        if [ -f "\${inidir}/\${inifile}.dpkg-new" ]; then
-            md5sum="\$(md5sum \${inidir}/\${inifile}.dpkg-new | sed -e 's/ .*//')"
-            old_md5sum="\$(md5sum \${inidir}/\${inifile} | sed -e 's/ .*//')"
-            if [ "\$md5sum" = "\$old_md5sum" ]; then
-                mv "\${inidir}/\${inifile}.dpkg-new" "\${inidir}/\${inifile}"
-            fi
-        fi
+	    # Register new conffile with UCF
+	    ucf /usr/share/php5/$EXTENSION/\${inifile} \${inidir}/\${inifile}
+	    ucfr --force php5-$EXTENSION \${inidir}/\${inifile}
 
-        # Enable the module
-        php5enmod \${dsoname}/\${priority:-20}
-    done
+	    # Move pre-extension manager conffile
+	    dpkg-maintscript-helper mv_conffile /etc/php5/conf.d/\${inifile} \${inidir}/\${inifile} 5.4.0~rc6-1 -- "\$@";
+
+	    if [ -f "\${inidir}/\${inifile}.dpkg-new" ]; then
+		md5sum="\$(md5sum \${inidir}/\${inifile}.dpkg-new | sed -e 's/ .*//')"
+		old_md5sum="\$(md5sum \${inidir}/\${inifile} | sed -e 's/ .*//')"
+		if [ "\$md5sum" = "\$old_md5sum" ]; then
+		    mv "\${inidir}/\${inifile}.dpkg-new" "\${inidir}/\${inifile}"
+		fi
+	    fi
+	
+	    php5_invoke enmod ALL \${dsoname}
+	done
+    fi
 fi
+
+#DEBHELPER#
 
 exit 0
 EOD
@@ -152,15 +191,17 @@ EOD
 # {{{ php5-EXTENSION.preinst
 cat > php5-$EXTENSION.preinst << EOD
 #!/bin/sh
+
 set -e
 
 #EXTRA#
-#DEBHELPER#
 
 for dsoname in $EXTENSION; do
     inifile=\${dsoname}.ini
     dpkg-maintscript-helper mv_conffile /etc/php5/conf.d/\${inifile} /etc/php5/mods-available/\${inifile} 5.4.0~rc6-1 -- "\$@";
 done
+
+#DEBHELPER#
 
 exit 0
 EOD
@@ -173,7 +214,6 @@ cat > php5-$EXTENSION.postrm << EOD
 set -e
 
 #EXTRA#
-#DEBHELPER#
 
 inidir=/etc/php5/mods-available
 for dsoname in $EXTENSION; do
@@ -182,18 +222,36 @@ for dsoname in $EXTENSION; do
     dpkg-maintscript-helper mv_conffile /etc/php5/conf.d/\${inifile} \${inidir}/\${inifile} 5.4.0~rc6-1 -- "\$@";
 
     if [ "\$1" = "purge" ]; then
-        for ext in '~' '%' .bak .ucf-new .ucf-old .ucf-dist;  do
-            rm -f \${inidir}/\${inifile}\${ext}
-        done
-        rm -f \${inidir}/\${inifile}
-        if which ucf >/dev/null; then
-            ucf --purge \${inidir}/\${inifile}
-        fi
-        if which ucfr >/dev/null; then
-            ucfr --purge php5-$EXTENSION \${inidir}/\${inifile}
-        fi
+        # Query which package has this conffile registered
+	if which ucfq >/dev/null; then
+	    ucfp=\$(ucfq -w \${inidir}/\${inifile} | cut -f 2 -d:)
+	fi
+
+        # Only work with the config file if it still belongs to us
+	if test "\$ucfp" = php5-$EXTENSION; then
+	    for ext in '~' '%' .bak .ucf-new .ucf-old .ucf-dist;  do
+		rm -f \${inidir}/\${inifile}\${ext}
+	    done
+	    rm -f \${inidir}/\${inifile}
+	    if which ucf >/dev/null; then
+		ucf --purge \${inidir}/\${inifile}
+	    fi
+	    if which ucfr >/dev/null; then
+		ucfr --purge php5-$EXTENSION \${inidir}/\${inifile}
+	    fi
+	fi
+	
+	if [ -e /usr/share/php5/php5-maintscript-helper ] ; then
+	    . /usr/share/php5/php5-maintscript-helper
+
+	    for dsoname in $EXTENSION; do
+		php5_invoke dismod ALL \${dsoname}
+	    done
+	fi
     fi
 done
+
+#DEBHELPER#
 
 exit 0
 EOD
@@ -206,13 +264,18 @@ cat > php5-$EXTENSION.prerm << EOD
 set -e
 
 #EXTRA#
-#DEBHELPER#
 
-if [ "\$1" = "remove" ]; then
-    for dsoname in $EXTENSION; do
-        php5dismod \${dsoname}
-    done
+if [ "\$1" = "remove" ] || [ "\$1" = "deconfigure" ]; then
+    if [ -e /usr/share/php5/php5-maintscript-helper ] ; then
+	. /usr/share/php5/php5-maintscript-helper
+
+	for dsoname in $EXTENSION; do
+	    php5_invoke dismod ALL \${dsoname}
+	done
+    fi
 fi
+
+#DEBHELPER#
 
 exit 0
 EOD
@@ -220,7 +283,9 @@ EOD
 
 # {{{ php5-EXTENSION.triggers
 cat > php5-$EXTENSION.triggers << EOD
-activate /etc/php5/conf.d
+activate /etc/php5/apache2/conf.d
+activate /etc/php5/apache2filter/conf.d
+activate /etc/php5/fpm/conf.d
 EOD
 # }}}
 
