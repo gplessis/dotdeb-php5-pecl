@@ -42,6 +42,8 @@ if [ ! -d $1 ] ; then
 fi
 
 EXTENSION=$(basename $1| tr [:upper:] [:lower:]|sed -ne 's/^\([a-z][[:alnum:]]*\).*$/\1/p')
+EXTENSION_TYPE=normal
+PRIORITY=20
 
 if [ -z $EXTENSION ] ; then
     echo "Error: Unable to determine the extension's name"
@@ -53,24 +55,29 @@ dpkg -l php5-dev | grep -q '^.i' || ( echo "Error : please install php5-dev" && 
 PHPVERSION=$(dpkg -s php5-dev|sed -ne 's/^Version: \(.*\)$/\1/p')
 PHPAPIVERSION=$(/usr/bin/php-config5 --phpapi)
 
+ADDITIONAL_CONFIGURE_OPTIONS=""
+EXTENSION_SO_NAME="$EXTENSION"
+
 if [ "$EXTENSION" == "memcached" ] ; then
     #ADDITIONAL_CONFIGURE_OPTIONS="--enable-memcached-json --enable-memcached-igbinary"
     ADDITIONAL_CONFIGURE_OPTIONS="--enable-memcached-json"
 #elif [ "$EXTENSION" == "redis" ] ; then
 #    ADDITIONAL_CONFIGURE_OPTIONS="--enable-redis-igbinary"
-else
-    ADDITIONAL_CONFIGURE_OPTIONS=""
 fi
 
 if [ "$EXTENSION" == "spplus" ] ; then
     EXTENSION_SO_NAME=php_spplus
-else
-    EXTENSION_SO_NAME=$EXTENSION
+fi
+
+if [ "$EXTENSION" == "xdebug" ] ; then
+    EXTENSION_TYPE=zend
 fi
 
 echo "Creating php5-$EXTENSION..."
 echo "   PHP version : $PHPVERSION"
 echo "   PHP Api : $PHPAPIVERSION"
+echo "   Extension type : $EXTENSION_TYPE"
+echo "   Priority : $PRIORITY"
 
 cd $1
 mkdir -p debian/source/
@@ -414,8 +421,8 @@ binary-arch: build install
 
 	mkdir -p debian/tmp/usr/share/php5/$EXTENSION/
 	echo "; configuration for php $EXTENSION module" > debian/tmp/usr/share/php5/$EXTENSION/$EXTENSION.ini
-	echo "; priority=20" >> debian/tmp/usr/share/php5/$EXTENSION/$EXTENSION.ini
-ifeq ($EXTENSION, xdebug)
+	echo "; priority=$PRIORITY" >> debian/tmp/usr/share/php5/$EXTENSION/$EXTENSION.ini
+ifeq ($EXTENSION_TYPE, zend)
 	echo "zend_extension=\`/usr/bin/php-config5 --extension-dir\`/$EXTENSION.so" >> debian/tmp/usr/share/php5/$EXTENSION/$EXTENSION.ini; $ADDITIONAL_COMMAND
 else
 	echo "extension=$EXTENSION.so" >> debian/tmp/usr/share/php5/$EXTENSION/$EXTENSION.ini; $ADDITIONAL_COMMAND
@@ -454,4 +461,6 @@ phpize
 
 cd $ORIGDIR
 
+# {{{ Vim variables
 # vim: sw=4 ts=4 fdm=marker
+# }}}
